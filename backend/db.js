@@ -18,7 +18,7 @@ const pool = mysql.createPool({
   queueLimit: 0,
 
   // DigitalOcean Managed MySQL over TLS
-  ssl: { rejectUnauthorized: true },
+  ssl: { rejectUnauthorized: false },
 });
 
 export default pool;
