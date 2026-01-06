@@ -2,6 +2,7 @@ import 'package:app/core/components/alert.dart';
 import 'package:app/core/components/button.dart';
 import 'package:app/core/components/card.dart';
 import 'package:app/core/components/footer.dart';
+import 'package:app/core/components/loader.dart';
 import 'package:app/core/components/modal.dart';
 import 'package:app/core/components/navigation.dart';
 import 'package:app/core/components/offcanvas.dart';
@@ -11,11 +12,12 @@ import 'package:app/core/services/job_service.dart';
 import 'package:app/core/services/verification_service.dart';
 import 'package:app/core/theme/colors.dart';
 import 'package:app/core/theme/typography.dart';
-import 'package:app/features/employer/employer_upload_document.dart';
+import 'package:app/features/admin/view_employer_documents.dart';
 import 'package:app/features/employer/post_job_form.dart';
 import 'package:app/features/employer/view_active_jobs.dart';
 import 'package:app/features/employer/view_applications.dart';
 import 'package:app/features/shared/conversations.dart';
+import 'package:app/features/shared/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
@@ -25,73 +27,93 @@ class EmployerDashboard extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final claims = useClaimsHook(context);
-    // final refresh = useState<bool>(false);
+    final userId = claims['id'];
+
+    final loading = useState(true);
     final jobs = useState<List<Map<String, dynamic>>>([]);
     final applications = useState<List<Map<String, dynamic>>>([]);
     final employerVerification = useState<Map<String, dynamic>>({});
 
-    // Future<void> setRefresh() async {
-    //   refresh.value = !refresh.value;
-    //   // await Future.delayed(const Duration(milliseconds: 300));
-    // }
-
-    // Fetch use token and define claims of logged user
+    /* ---------------- FETCH VERIFICATION ---------------- */
     useEffect(() {
-      void fetchData() async {
-        try {
-          final data = await VerificationService.getVerificationByUser(claims['id']);
-          employerVerification.value = data;
-        } catch (e) {
-          if (!context.mounted) return;
-          showAlertError(context, "Failed to fetch user credential please logout and re-login.");
-        }
-      }
-      fetchData();
-      return null;
-    }, [claims]);
+      if (userId == null) return null;
 
-    // Fetch jobs and existion application for the jobs created by logged employer
-    useEffect(() {
-      void fetchData() async {
+      () async {
         try {
-          final jobsRes = await JobService.getJobsByEmployer(claims["id"]);
-          final applicationsRes = await ApplicationService.getApplicationsByEmployer(claims["id"]);
-          jobs.value = jobsRes;
-          applications.value = applicationsRes;
-        } catch (e) {
+          employerVerification.value =
+              await VerificationService.getVerificationByUser(userId);
+        } catch (_) {
           if (!context.mounted) return;
-          showAlertError(context, "Failed to fetch user credential please logout and re-login.");
-        }
-      }
-      fetchData();
-      return null;
-    }, [claims["id"]]);
-
-    // Function for submitting application for employer
-    Future<void> submitVerification() async {
-      try {
-        final res = await VerificationService.createVerification({
-          'employerId': claims['id'],
-          'documents': 'TESTING',
-          'status': 'pending',
-          'role': 'employer'
-        });
-        if (res.isNotEmpty) {
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Document application successful. Please wait for admin respons.')),
+          showAlertError(
+            context,
+            "Failed to fetch verification. Please logout and re-login.",
           );
         }
-      } catch (e) {
+      }();
+
+      return null;
+    }, [userId]);
+
+    /* ---------------- FETCH JOBS + APPLICATIONS ---------------- */
+    useEffect(() {
+      if (userId == null) return null;
+
+      () async {
+        loading.value = true;
+        try {
+          jobs.value = await JobService.getJobsByEmployer(userId);
+          applications.value =
+              await ApplicationService.getApplicationsByEmployer(userId);
+        } catch (_) {
+          if (!context.mounted) return;
+          showAlertError(
+            context,
+            "Failed to fetch employer data. Please logout and re-login.",
+          );
+        } finally {
+          loading.value = false;
+        }
+      }();
+
+      return null;
+    }, [userId]);
+
+    /* ---------------- SUBMIT VERIFICATION ---------------- */
+    Future<void> submitVerification() async {
+      if (userId == null) return;
+
+      try {
+        final res = await VerificationService.createVerification({
+          'employerId': userId,
+          'documents': 'TESTING',
+          'status': 'pending',
+          'role': 'employer',
+        });
+
+        if (res.isNotEmpty && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Document submitted successfully. Please wait for admin review.',
+              ),
+            ),
+          );
+        }
+      } catch (_) {
         if (!context.mounted) return;
-        showAlertError(context, "Failed to fetch user credential please logout and re-login.");
+        showAlertError(
+          context,
+          "Failed to submit verification. Please try again.",
+        );
       }
     }
 
     return Scaffold(
       appBar: AppNavigationBar(title: 'Mendez PESO Job Portal', onMenuPressed: (context) { Scaffold.of(context).openDrawer(); }),
       endDrawer: const OffcanvasNavigation(),
-      body: SingleChildScrollView(
+      body: loading.value 
+        ? const Loader()
+        : SingleChildScrollView(
         child: Column(
           children: [
             Padding(
@@ -100,7 +122,8 @@ class EmployerDashboard extends HookWidget {
                 children: [
                   DashboardHeader(
                     employerVerification: employerVerification.value,
-                    submitVerification: submitVerification
+                    submitVerification: submitVerification,
+                    claims: claims,
                   ),
                   const SizedBox(height: 5),
                   DashboardSummary(claims: claims, jobs: jobs.value, applications: applications.value),
@@ -124,11 +147,13 @@ class EmployerDashboard extends HookWidget {
 class DashboardHeader extends StatelessWidget {
   final VoidCallback submitVerification;
   final Map<String, dynamic> employerVerification; 
+  final Map<String, dynamic> claims;
 
   const DashboardHeader({
     super.key,
     required this.submitVerification,
     required this.employerVerification,
+    required this.claims,
   });
 
   
@@ -159,7 +184,7 @@ class DashboardHeader extends StatelessWidget {
                       style: TextStyle(color: Color.fromARGB(255, 203, 152, 0)),
                     ),
                     GestureDetector(
-                      onTap: () => navigateTo(context, const EmployerUploadAllDocuments()),
+                      onTap: () => navigateTo(context, ViewEmployerDocuments(claims: claims)),
                       child: Text(
                         'Submit Documents',
                         style: const TextStyle(
@@ -174,28 +199,70 @@ class DashboardHeader extends StatelessWidget {
             ),
           )
         else
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min, 
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    'Verification Status: ${employerVerification['status'].toUpperCase()}',
-                    textAlign: TextAlign.center,
-                    style: AppText.textMd.merge(AppText.fontSemibold),
+          if (employerVerification["status"] == 'rejected' || employerVerification["status"] == 'pending')
+            SizedBox(
+              width: double.infinity,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Card(
+                  color: const Color.fromARGB(255, 227, 238, 255),
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  if (employerVerification['status'] == "rejected")
-                    Text(
-                      'Reason: ${employerVerification["note"] ?? "Reason not specified."}',
-                      textAlign: TextAlign.center,
-                      style: AppText.textDanger,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                      horizontal: 20,
                     ),
-                ],
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Verification Status: ${employerVerification['status'].toUpperCase()}',
+                          textAlign: TextAlign.center,
+                          style: AppText.textMd
+                              .merge(AppText.fontSemibold)
+                              .copyWith(
+                                color: employerVerification['status'] == 'approved'
+                                    ? Colors.green
+                                    : employerVerification['status'] == 'rejected'
+                                        ? AppColor.danger
+                                        : AppColor.primary, // pending
+                              ),
+                        ),
+
+                        // ❌ REJECTED → show reason
+                        if (employerVerification['status'] == "rejected") ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Reason: ${employerVerification["note"] ?? "Reason not specified."}',
+                            textAlign: TextAlign.center,
+                            style: AppText.textSm.copyWith(color: Colors.black),
+                          ),
+                        ],
+
+                        // ✅ PENDING → show button
+                        if (employerVerification['status'] == 'pending') ...[
+                          const SizedBox(height: 12),
+                          AppButton(
+                            label: 'View Documents',
+                            onPressed: () => navigateTo(
+                              context,
+                              ViewEmployerDocuments(
+                                claims: claims,
+                              ),
+                            ),
+                            visualDensityY: -2,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ),
-          )
+            )
       ],
     );
   }
@@ -299,15 +366,9 @@ class DashboardOtherContent extends StatelessWidget {
         const SizedBox(height: 10),
         const DashboardOtherContentCard(
           header: '🔔 Recent Notifications', 
-          paragraph: 'No notifications yet.', 
-          button: EmployerContentCardButton(text: 'View Norifications', page: EmployerDashboard())
+          paragraph: '', 
+          button: EmployerContentCardButton(text: 'View Notifications', page: Notifications())
         ),
-        // const SizedBox(height: 10),
-        // const DashboardOtherContentCard(
-        //   header: '⚖️ Compliance', 
-        //   paragraph: 'View templates and stay updated with labor laws.', 
-        //   button: EmployerContentCardButton(text: 'Go to Compliance Section', page: EmployerDashboard())
-        // ),
       ],
     );
   }
