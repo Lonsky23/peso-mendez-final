@@ -8,7 +8,6 @@ if (!serviceAccountJson) {
 
 const serviceAccount = JSON.parse(serviceAccountJson);
 
-// Fix escaped newlines in the private key (common in env vars)
 if (serviceAccount.private_key) {
   serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
 }
